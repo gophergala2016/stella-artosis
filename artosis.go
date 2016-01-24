@@ -10,6 +10,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 type newFunc func() hash.Hash
@@ -36,37 +39,71 @@ type File struct {
 	Hash []byte
 }
 
-func Scan(c Config) []File {
-	h := hashes[c.Hash]()
-	walk := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+func Scan(conf Config) []*File {
+	ret := []*File{}
+	var wg sync.WaitGroup
+	fn, c := genScan(conf)
+
+	o := make(chan *File)
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		h := hashes[conf.Hash]()
+		go func() {
+			for f := range c {
+				stella(f, h, o)
+			}
+		}()
+	}
+	for r, _ := range conf.Include {
+		fmt.Printf("scanning: %s\n", r)
+		wg.Add(1)
+		go func() {
+			filepath.Walk(r, fn)
+			wg.Done()
+		}()
+	}
+	go func() {
+		for f := range o {
+			fmt.Println(f.Stat.Name())
+			ret = append(ret, f)
+		}
+	}()
+	wg.Wait()
+	close(c)
+	return ret
+}
+
+func skip(s string, ign map[string]bool) bool {
+	for i := range ign {
+		if strings.HasPrefix(s, i) {
+			return true
+		}
+	}
+	return false
+}
+
+func stella(file *File, h hash.Hash, out chan *File) error {
+	f, err := os.Open(file.Path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	fmt.Printf("%x  %s\n", h.Sum(nil), file.Stat.Name())
+	h.Reset()
+	return nil
+}
+
+func genScan(conf Config) (filepath.WalkFunc, chan *File) {
+	c := make(chan *File)
+	ret := func(path string, info os.FileInfo, err error) error {
+		if skip(path, conf.Ignored) {
+			return nil
 		}
 		if info.IsDir() {
 			return nil
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		if _, err := io.Copy(h, f); err != nil {
-			return err
-		}
-		fmt.Printf("%x  %s\n", h.Sum(nil), info.Name())
-		h.Reset()
-		return nil
-	}
-	for r, _ := range c.Include {
-		fmt.Printf("scanning: %s\n", r)
-		filepath.Walk(r, walk)
-	}
-	return nil
-}
-
-func genScan() (filepath.WalkFunc, chan *File) {
-	c := make(chan *File)
-	ret := func(path string, info os.FileInfo, err error) error {
 		f := &File{
 			Stat: info,
 			Path: path,
