@@ -25,12 +25,13 @@ var hashes map[string]newFunc = map[string]newFunc{
 }
 
 type Config struct {
-	// Include if non-empty will only scan the files/directories specified
-	// if empty, defaults to /
+	// Include sets the directories to be scanned recursively.
 	Include map[string]bool
 	// Ignored will construct a set of files to ignore within Include
+	// it uses a simple prefix match on the fully qualified path.
 	Ignored map[string]bool
-	Hash    string
+	// Hash controls which hahsing algorithm is used.
+	Hash string
 }
 
 type File struct {
@@ -39,9 +40,11 @@ type File struct {
 	Hash []byte
 }
 
+// Scan walks the filesystem rooted in Config.Include and pushes
+// the file information into the hashing function.
 func Scan(conf Config) []*File {
 	ret := []*File{}
-	var wg sync.WaitGroup
+	var wg, remaining sync.WaitGroup
 	fn, c := genScan(conf)
 
 	o := make(chan *File)
@@ -49,7 +52,12 @@ func Scan(conf Config) []*File {
 		h := hashes[conf.Hash]()
 		go func() {
 			for f := range c {
-				stella(f, h, o)
+				remaining.Add(1)
+				err := stella(f, h, o)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error in hashing: %v\n", err)
+					remaining.Done()
+				}
 			}
 		}()
 	}
@@ -63,11 +71,13 @@ func Scan(conf Config) []*File {
 	}
 	go func() {
 		for f := range o {
-			fmt.Println(f.Stat.Name())
+			fmt.Printf("%x  %s\n", f.Hash, f.Stat.Name())
 			ret = append(ret, f)
+			remaining.Done()
 		}
 	}()
 	wg.Wait()
+	remaining.Wait()
 	close(c)
 	return ret
 }
@@ -90,7 +100,8 @@ func stella(file *File, h hash.Hash, out chan *File) error {
 	if _, err := io.Copy(h, f); err != nil {
 		return err
 	}
-	fmt.Printf("%x  %s\n", h.Sum(nil), file.Stat.Name())
+	file.Hash = h.Sum(nil)
+	out <- file
 	h.Reset()
 	return nil
 }
