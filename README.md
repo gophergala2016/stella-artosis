@@ -5,3 +5,11 @@ Stella Artosis
 
 Stella Artosis is a simple program used to quickly hash files on your
 filesystem for use in forensic analysis.
+
+Usage:
+
+```
+go get github.com/gophergala2016/stella-artosis
+go install github.com/gophergala2016/stella-artosis/cmd/artosis
+artosis -include /usr/lib
+```
