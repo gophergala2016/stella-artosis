@@ -11,5 +11,6 @@ Usage:
 ```
 go get github.com/gophergala2016/stella-artosis
 go install github.com/gophergala2016/stella-artosis/cmd/artosis
+export GOMAXPROCS=`sysctl -n hw.ncpu`
 artosis -include /usr/lib
 ```
